@@ -2,11 +2,13 @@ use atom_syndication::{Entry, Feed};
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::{routing::get, Router};
-use eyre::Context;
+use eyre::{Context, eyre};
 use futures::future::try_join_all;
 use itertools::Itertools;
+use moka::future::Cache;
 use regex::Regex;
 use reqwest::Client;
+use std::time::Duration;
 use tracing::{error, info};
 
 use serde::Deserialize;
@@ -16,35 +18,58 @@ lazy_static::lazy_static! {
     static ref DATA_SCORE: Regex = Regex::new(r#" data-score="(?P<score>\d+)""#).unwrap();
 }
 
-async fn get_score(client: Client, entry: &Entry) -> eyre::Result<Option<u64>> {
+type ScoreCache = Cache<String, Option<u64>>;
+
+async fn load_score(client: Client, mut url: String) -> eyre::Result<Option<u64>> {
+    url = url.replace("www.reddit.com", "old.reddit.com");
+    let res = client
+        .get(url)
+        .header("User-Agent", USER_AGENT)
+        .send()
+        .await
+        .context("cannot load post")?
+        .error_for_status()
+        .context("status code error when loading post")?
+        .text()
+        .await
+        .context("cannot parse post text")?;
+    let score = DATA_SCORE
+        .captures(&res)
+        .and_then(|c| c["score"].parse::<u64>().ok());
+    Ok(score)
+}
+
+async fn get_score(
+    client: Client,
+    entry: &Entry,
+    score_cache: &ScoreCache,
+) -> eyre::Result<Option<u64>> {
     match entry.links.get(0) {
         Some(link) => {
-            let mut url = link.href.clone();
-            url = url.replace("www.reddit.com", "old.reddit.com");
-            let res = client
-                .get(url)
-                .header("User-Agent", USER_AGENT)
-                .send()
+            let url = link.href.clone();
+            let score = score_cache
+                .try_get_with(url.clone(), load_score(client, url))
                 .await
-                .context("cannot load post")?
-                .text()
-                .await?;
-            let score = DATA_SCORE
-                .captures(&res)
-                .and_then(|c| c["score"].parse::<u64>().ok());
+                .map_err(|e| eyre!("cannot load score, {e}"))?;
             Ok(score)
         }
         None => Ok(None),
     }
 }
 
-async fn feed_filter(client: Client, min_score: u64) -> eyre::Result<String> {
+async fn feed_filter(
+    client: Client,
+    score_cache: ScoreCache,
+    min_score: u64,
+) -> eyre::Result<String> {
     info!("fetching feed");
     let feed = client
         .get("https://reddit.com/r/rust/.rss")
         .header("User-Agent", USER_AGENT)
         .send()
         .await
+        .context("cannot send feed reqwest")?
+        .error_for_status()
         .context("cannot load feed")?
         .text()
         .await
@@ -55,7 +80,7 @@ async fn feed_filter(client: Client, min_score: u64) -> eyre::Result<String> {
     let score_fetch = atom_feed
         .entries()
         .into_iter()
-        .map(|e| get_score(client.clone(), e))
+        .map(|e| get_score(client.clone(), e, &score_cache))
         .collect_vec();
     let scores = try_join_all(score_fetch).await?;
 
@@ -79,10 +104,10 @@ struct Filter {
 }
 
 async fn rust_rss(
-    State(client): State<Client>,
+    State((client, score_cache)): State<(Client, ScoreCache)>,
     Query(Filter { min_score }): Query<Filter>,
 ) -> (StatusCode, String) {
-    let res = feed_filter(client, min_score).await;
+    let res = feed_filter(client, score_cache, min_score).await;
     match res {
         Ok(s) => (StatusCode::OK, s),
         Err(e) => {
@@ -97,10 +122,13 @@ async fn rust_rss(
 
 #[shuttle_runtime::main]
 async fn axum() -> shuttle_axum::ShuttleAxum {
-    let state = Client::new();
+    let client = Client::new();
+    let score_cache: ScoreCache = moka::future::CacheBuilder::new(1000)
+        .time_to_live(Duration::from_secs(60 * 60))
+        .build();
     let router = Router::new()
         .route("/rust", get(rust_rss))
-        .with_state(state);
+        .with_state((client, score_cache));
 
     Ok(router.into())
 }
