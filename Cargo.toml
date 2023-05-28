@@ -1,0 +1,11 @@
+[package]
+name = "redditrss"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+shuttle-runtime = "0.17.0"
+axum = "0.6.18"
+shuttle-axum = "0.17.0"
+tokio = "1.28.1"
