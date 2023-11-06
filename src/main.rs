@@ -2,7 +2,7 @@ use atom_syndication::{Entry, Feed};
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::{routing::get, Router};
-use eyre::{Context, eyre};
+use eyre::{eyre, Context};
 use futures::future::try_join_all;
 use itertools::Itertools;
 use moka::future::Cache;
@@ -13,7 +13,8 @@ use tracing::{error, info};
 
 use serde::Deserialize;
 
-const USER_AGENT: &str = "shuttle-reddit-rss:0.1.0";
+const USER_AGENT: &str = concat!("shuttle-reddit-rss:", env!("CARGO_PKG_VERSION"));
+
 lazy_static::lazy_static! {
     static ref DATA_SCORE: Regex = Regex::new(r#" data-score="(?P<score>\d+)""#).unwrap();
 }
@@ -59,12 +60,13 @@ async fn get_score(
 
 async fn feed_filter(
     client: Client,
+    subreddit: &str,
     score_cache: ScoreCache,
     min_score: u64,
 ) -> eyre::Result<String> {
     info!("fetching feed");
     let feed = client
-        .get("https://reddit.com/r/rust/.rss")
+        .get(format!("https://reddit.com/{subreddit}/.rss"))
         .header("User-Agent", USER_AGENT)
         .send()
         .await
@@ -102,12 +104,28 @@ async fn feed_filter(
 struct Filter {
     min_score: u64,
 }
-
 async fn rust_rss(
     State((client, score_cache)): State<(Client, ScoreCache)>,
     Query(Filter { min_score }): Query<Filter>,
 ) -> (StatusCode, String) {
-    let res = feed_filter(client, score_cache, min_score).await;
+    let res = feed_filter(client, "r/rust", score_cache, min_score).await;
+    match res {
+        Ok(s) => (StatusCode::OK, s),
+        Err(e) => {
+            error!("error: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Something went wrong"),
+            )
+        }
+    }
+}
+
+async fn programming_rss(
+    State((client, score_cache)): State<(Client, ScoreCache)>,
+    Query(Filter { min_score }): Query<Filter>,
+) -> (StatusCode, String) {
+    let res = feed_filter(client, "r/programming", score_cache, min_score).await;
     match res {
         Ok(s) => (StatusCode::OK, s),
         Err(e) => {
@@ -128,6 +146,7 @@ async fn axum() -> shuttle_axum::ShuttleAxum {
         .build();
     let router = Router::new()
         .route("/rust", get(rust_rss))
+        .route("/programming", get(programming_rss))
         .with_state((client, score_cache));
 
     Ok(router.into())
