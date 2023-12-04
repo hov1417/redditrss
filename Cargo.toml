@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 atom_syndication = "0.12.1"
-axum = "0.7.1"
+axum = "0.6.x"
 eyre = "0.6.8"
 futures = "0.3.28"
 hyper = "1.0.1"
