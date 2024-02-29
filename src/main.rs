@@ -1,23 +1,25 @@
+use std::time::Duration;
+
 use atom_syndication::{Entry, Feed};
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::{routing::get, Router};
-use eyre::{eyre, Context};
+use color_eyre::config::{EyreHook, HookBuilder, PanicHook, Theme};
+use eyre::eyre;
+use eyre::{bail, Context};
 use futures::future::try_join_all;
 use itertools::Itertools;
 use moka::future::Cache;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use reqwest::Client;
-use std::time::Duration;
+use serde::Deserialize;
 use tracing::{error, info};
 
-use serde::Deserialize;
+use tracing_error::ErrorLayer;
+use tracing_subscriber::fmt;
 
 const USER_AGENT: &str = concat!("shuttle-reddit-rss:", env!("CARGO_PKG_VERSION"));
-
-lazy_static::lazy_static! {
-    static ref DATA_SCORE: Regex = Regex::new(r#" data-score="(?P<score>\d+)""#).unwrap();
-}
 
 type ScoreCache = Cache<String, Option<u64>>;
 
@@ -34,6 +36,9 @@ async fn load_score(client: Client, mut url: String) -> eyre::Result<Option<u64>
         .text()
         .await
         .context("cannot parse post text")?;
+    static DATA_SCORE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r#" data-score="(?P<score>\d+)""#).unwrap());
+
     let score = DATA_SCORE
         .captures(&res)
         .and_then(|c| c["score"].parse::<u64>().ok());
@@ -45,7 +50,7 @@ async fn get_score(
     entry: &Entry,
     score_cache: &ScoreCache,
 ) -> eyre::Result<Option<u64>> {
-    match entry.links.get(0) {
+    match entry.links.first() {
         Some(link) => {
             let url = link.href.clone();
             let score = score_cache
@@ -65,23 +70,27 @@ async fn feed_filter(
     min_score: u64,
 ) -> eyre::Result<String> {
     info!("fetching feed");
-    let feed = client
+    let request = client
         .get(format!("https://reddit.com/{subreddit}/.rss"))
         .header("User-Agent", USER_AGENT)
         .send()
         .await
-        .context("cannot send feed reqwest")?
-        .error_for_status()
-        .context("cannot load feed")?
-        .text()
-        .await
-        .context("cannot parse feed")?;
+        .context("cannot send feed request")?;
+    let status = request.status();
+    if status.is_client_error() || status.is_server_error() {
+        bail!(
+            "cannot load feed: \t\nstatus: {:?}\t\nbody: {:?}",
+            status,
+            request.text().await
+        );
+    }
+    let feed = request.text().await.context("cannot parse feed")?;
     let mut atom_feed = Feed::read_from(feed.as_bytes()).context("Cannot parse feed")?;
 
     info!("fetching scores");
     let score_fetch = atom_feed
         .entries()
-        .into_iter()
+        .iter()
         .map(|e| get_score(client.clone(), e, &score_cache))
         .collect_vec();
     let scores = try_join_all(score_fetch).await?;
@@ -104,49 +113,67 @@ async fn feed_filter(
 struct Filter {
     min_score: u64,
 }
-async fn rust_rss(
+
+async fn subreddit_rss(
     State((client, score_cache)): State<(Client, ScoreCache)>,
+    Path(subreddit): Path<String>,
     Query(Filter { min_score }): Query<Filter>,
 ) -> (StatusCode, String) {
-    let res = feed_filter(client, "r/rust", score_cache, min_score).await;
+    let res = feed_filter(client, &format!("r/{subreddit}"), score_cache, min_score).await;
     match res {
         Ok(s) => (StatusCode::OK, s),
         Err(e) => {
             error!("error: {e}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Something went wrong"),
+                String::from("Something went wrong"),
             )
         }
     }
 }
 
-async fn programming_rss(
-    State((client, score_cache)): State<(Client, ScoreCache)>,
-    Query(Filter { min_score }): Query<Filter>,
-) -> (StatusCode, String) {
-    let res = feed_filter(client, "r/programming", score_cache, min_score).await;
-    match res {
-        Ok(s) => (StatusCode::OK, s),
-        Err(e) => {
-            error!("error: {e}");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Something went wrong"),
-            )
-        }
-    }
+fn build_error_hooks() -> (PanicHook, EyreHook) {
+    HookBuilder::new()
+        .theme(Theme::default())
+        .add_default_filters()
+        .into_hooks()
+}
+
+fn init_panic_hook() -> eyre::Result<()> {
+    let (panic_hook, eyre_hook) = build_error_hooks();
+
+    eyre_hook.install()?;
+    std::panic::set_hook(Box::new(move |pi| {
+        error!("Panic caught: {}", panic_hook.panic_report(pi));
+    }));
+    Ok(())
+}
+
+fn tracing() {
+    use tracing_subscriber::prelude::*;
+
+    tracing_subscriber::registry()
+        .with(ErrorLayer::default())
+        .with(fmt::layer().with_target(false).with_ansi(true).json())
+        .with(
+            // let user override RUST_LOG in local run if they want to
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .or_else(|_| tracing_subscriber::EnvFilter::try_new("info,shuttle=trace"))
+                .unwrap(),
+        )
+        .init();
 }
 
 #[shuttle_runtime::main]
 async fn axum() -> shuttle_axum::ShuttleAxum {
+    tracing();
+    init_panic_hook().unwrap();
     let client = Client::new();
     let score_cache: ScoreCache = moka::future::CacheBuilder::new(1000)
         .time_to_live(Duration::from_secs(60 * 60))
         .build();
     let router = Router::new()
-        .route("/rust", get(rust_rss))
-        .route("/programming", get(programming_rss))
+        .route("/feed/:subreddit", get(subreddit_rss))
         .with_state((client, score_cache));
 
     Ok(router.into())
