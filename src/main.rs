@@ -42,6 +42,11 @@ async fn load_score(client: Client, mut url: String) -> eyre::Result<Option<u64>
     let score = DATA_SCORE
         .captures(&res)
         .and_then(|c| c["score"].parse::<u64>().ok());
+
+    if score.is_none() {
+        info!("Cannot find score in post");
+    }
+
     Ok(score)
 }
 
@@ -59,7 +64,10 @@ async fn get_score(
                 .map_err(|e| eyre!("cannot load score, {e}"))?;
             Ok(score)
         }
-        None => Ok(None),
+        None => {
+            info!("Cannot find link in entry");
+            Ok(None)
+        }
     }
 }
 
@@ -157,8 +165,8 @@ fn tracing() {
         .with(fmt::layer().with_target(false).with_ansi(true).json())
         .with(
             // let user override RUST_LOG in local run if they want to
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .or_else(|_| tracing_subscriber::EnvFilter::try_new("info,shuttle=trace"))
+            tracing_subscriber::filter::EnvFilter::try_from_default_env()
+                .or_else(|_| tracing_subscriber::filter::EnvFilter::try_new("info,shuttle=trace"))
                 .unwrap(),
         )
         .init();
