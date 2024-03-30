@@ -1,0 +1,55 @@
+---
+source: src/reddit/client.rs
+expression: res
+---
+[
+    RedditComment {
+        data: RedditCommentData {
+            children: [
+                RedditCommentItem(
+                    RedditCommentItem {
+                        data: RedditCommentItemInfo {
+                            score: 29,
+                        },
+                    },
+                ),
+            ],
+        },
+    },
+    RedditComment {
+        data: RedditCommentData {
+            children: [
+                RedditCommentItem(
+                    RedditCommentItem {
+                        data: RedditCommentItemInfo {
+                            score: 29,
+                        },
+                    },
+                ),
+                Comment(
+                    RedditComment {
+                        data: RedditCommentData {
+                            children: [
+                                String(
+                                    "kx4ztc2",
+                                ),
+                                String(
+                                    "kx5wb65",
+                                ),
+                                String(
+                                    "kx8e8k7",
+                                ),
+                                String(
+                                    "kx5796m",
+                                ),
+                                String(
+                                    "kx4r3wd",
+                                ),
+                            ],
+                        },
+                    },
+                ),
+            ],
+        },
+    },
+]
