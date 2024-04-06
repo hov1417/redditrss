@@ -74,7 +74,7 @@ impl RssFeedProvider {
     }
 
     async fn load_score(&self, mut url: String) -> eyre::Result<u64> {
-        url = url.replace("https://www.reddit.com", "");
+        url = url.replace("https://www.reddit.com/", "");
         self.reddit_client
             .get_article_score(&url)
             .await

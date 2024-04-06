@@ -162,16 +162,21 @@ struct RedditCommentData {
 
 #[derive(serde::Deserialize, Debug)]
 #[serde(untagged)]
+#[allow(dead_code)]
 enum RedditCommentChild {
     RedditCommentItem(RedditCommentItem),
     String(String),
-    Comment(RedditComment)
+    Comment(RedditComment),
+    Other(serde_json::Value),
 }
 
 impl RedditCommentChild {
     fn data(&self) -> eyre::Result<&RedditCommentItemInfo> {
         match self {
             RedditCommentChild::RedditCommentItem(item) => Ok(&item.data),
+            RedditCommentChild::Other(v) => {
+                bail!("Comment child is an unknown type: {v}")
+            }
             _ => {
                 bail!("Comment child is not a known type")
             }
