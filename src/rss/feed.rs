@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use atom_syndication::{Entry, Feed};
-use eyre::{bail, Context, eyre};
+use eyre::{bail, eyre, Context};
 use futures::future::try_join_all;
 use itertools::Itertools;
 use reqwest::Client;
@@ -49,7 +49,8 @@ impl RssFeedProvider {
             );
         }
         let feed = request.text().await.context("cannot parse feed")?;
-        let mut atom_feed = Feed::read_from(feed.as_bytes()).context("Cannot parse feed")?;
+        let mut atom_feed =
+            Feed::read_from(feed.as_bytes()).map_err(|e| eyre!("Cannot parse feed: {e:?}"))?;
 
         info!("fetching scores");
         let score_fetch = atom_feed

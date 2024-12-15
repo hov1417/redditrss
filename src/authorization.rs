@@ -1,7 +1,7 @@
-use std::sync::Arc;
 use shuttle_runtime::SecretStore;
+use std::sync::Arc;
 
-/// Dummy implementation for authorization 
+/// Dummy implementation for authorization
 #[derive(Clone)]
 pub struct Authorization {
     secret_store: Arc<SecretStore>,
@@ -17,11 +17,9 @@ pub struct QueryToken {
 
 impl Authorization {
     pub fn new(secret_store: Arc<SecretStore>) -> Authorization {
-        Authorization {
-            secret_store,
-        }
+        Authorization { secret_store }
     }
-    
+
     pub fn authorize(&self, query_token: QueryToken) -> bool {
         let token = self.secret_store.get("BASIC_TOKEN").unwrap();
         query_token.token == token

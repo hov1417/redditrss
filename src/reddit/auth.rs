@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use eyre::{Context, ContextCompat, eyre};
+use eyre::{eyre, Context, ContextCompat};
 use reqwest::Client;
 use serde::Deserialize;
 use shuttle_runtime::SecretStore;
