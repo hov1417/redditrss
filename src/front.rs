@@ -20,7 +20,7 @@ pub struct ApplicationState {
 const USER_AGENT: &str = concat!("shuttle:reddit-rss:", env!("CARGO_PKG_VERSION"));
 
 impl ApplicationState {
-    pub fn new(secrets: Arc<SecretStore>) -> ApplicationState {
+    pub fn new(secrets: Arc<SecretStore>) -> Self {
         let client = Client::builder()
             .default_headers({
                 let mut headers = header::HeaderMap::new();
@@ -29,12 +29,12 @@ impl ApplicationState {
             })
             .build()
             .unwrap();
-        ApplicationState {
+        Self {
             feed_provider: RssFeedProvider::new(
                 client.clone(),
-                RedditClient::new(secrets.clone(), client.clone()),
+                RedditClient::new(secrets.clone(), client),
             ),
-            authorization: Authorization::new(secrets.clone()),
+            authorization: Authorization::new(secrets),
         }
     }
 }
@@ -54,7 +54,7 @@ pub async fn subreddit_rss(
     Query(Filter { min_score }): Query<Filter>,
     Query(auth): Query<QueryToken>,
 ) -> (StatusCode, String) {
-    if !authorization.authorize(auth) {
+    if !authorization.authorize(&auth) {
         return (StatusCode::UNAUTHORIZED, String::from("Unauthorized"));
     }
     let res = feed_provider

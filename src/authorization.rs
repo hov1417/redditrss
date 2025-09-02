@@ -16,11 +16,11 @@ pub struct QueryToken {
 }
 
 impl Authorization {
-    pub fn new(secret_store: Arc<SecretStore>) -> Authorization {
-        Authorization { secret_store }
+    pub const fn new(secret_store: Arc<SecretStore>) -> Self {
+        Self { secret_store }
     }
 
-    pub fn authorize(&self, query_token: QueryToken) -> bool {
+    pub fn authorize(&self, query_token: &QueryToken) -> bool {
         let token = self.secret_store.get("BASIC_TOKEN").unwrap();
         query_token.token == token
     }

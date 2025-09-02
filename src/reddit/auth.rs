@@ -22,8 +22,8 @@ pub struct RedditAuth {
 }
 
 impl RedditAuth {
-    pub fn new(secrets: Arc<SecretStore>) -> RedditAuth {
-        RedditAuth {
+    pub fn new(secrets: Arc<SecretStore>) -> Self {
+        Self {
             token_cache: moka::future::CacheBuilder::new(1)
                 .time_to_live(std::time::Duration::from_secs(4 * 60 * 60)) // 4 hours
                 .build(),

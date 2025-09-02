@@ -26,8 +26,8 @@ pub struct RedditClient {
 }
 
 impl RedditClient {
-    pub fn new(secret_store: Arc<SecretStore>, client: reqwest::Client) -> RedditClient {
-        RedditClient {
+    pub fn new(secret_store: Arc<SecretStore>, client: reqwest::Client) -> Self {
+        Self {
             client,
             auth: Arc::new(RedditAuth::new(secret_store)),
             permit: Arc::new(RwLock::new(false)),
@@ -38,22 +38,21 @@ impl RedditClient {
         self.auth.get_token(&self.client).await
     }
 
-    /// ordinary_url is the URL of the post without the `https://www.reddit.com` part.
+    /// `ordinary_url` is the URL of the post without the `https://www.reddit.com` part.
     /// e.g. `/r/rust/comments/1234/this_is_a_post/`
     pub async fn get_article_score(&self, ordinary_url: &str) -> eyre::Result<u64> {
         for _ in 0..3 {
-            match self._get_article_score(ordinary_url).await? {
-                Some(score) => return Ok(score),
-                None => continue,
+            if let Some(score) = self.load_article_score(ordinary_url).await? {
+                return Ok(score);
             }
         }
         bail!("Cannot get article score after 3 retries")
     }
 
-    async fn _get_article_score(&self, ordinary_url: &str) -> eyre::Result<Option<u64>> {
+    async fn load_article_score(&self, ordinary_url: &str) -> eyre::Result<Option<u64>> {
         let token = self.get_token().await?;
 
-        let _guard = self.check_throttle().await?;
+        let guard = self.check_throttle().await?;
         let url = format!("https://oauth.reddit.com/{ordinary_url}");
 
         info!("Requesting {url}");
@@ -67,7 +66,7 @@ impl RedditClient {
             .await
             .context("Cannot send request")?;
 
-        drop(_guard);
+        drop(guard);
 
         if self.rate_limiting(&res).await? {
             return Ok(None);
@@ -134,7 +133,7 @@ impl RedditClient {
         // getting mutable reference to the make other requests wait
         let mut_permit = self.permit.write().await;
         tokio::time::sleep(Duration::from_secs_f64(throttle_time)).await;
-        drop(mut_permit)
+        drop(mut_permit);
     }
 }
 
@@ -173,8 +172,8 @@ enum RedditCommentChild {
 impl RedditCommentChild {
     fn data(&self) -> eyre::Result<&RedditCommentItemInfo> {
         match self {
-            RedditCommentChild::RedditCommentItem(item) => Ok(&item.data),
-            RedditCommentChild::Other(v) => {
+            Self::RedditCommentItem(item) => Ok(&item.data),
+            Self::Other(v) => {
                 bail!("Comment child is an unknown type: {v}")
             }
             _ => {
